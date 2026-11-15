@@ -1,493 +1,394 @@
 import { prisma } from '../src/config/db.js';
 import { hashPasscode } from '../src/utils/password.js';
+import { getCurrentDateString } from '../src/utils/date.js';
 
 async function seed() {
-  console.log('Seeding CareCircle demo data...');
+  console.log('\n======================================================');
+  console.log('   🌱 SEEDING CARECIRCLE DEMO ENVIRONMENT');
+  console.log('======================================================\n');
 
-  const circleCode = 'CARE-ROSE';
-  const elderPasscode = 'ELDER123';
-  const caretakerPasscode = 'CARE456';
-  const familyPasscode = 'FAM789';
-
-  const [elderHash, caretakerHash, familyHash] = await Promise.all([
-    hashPasscode(elderPasscode),
-    hashPasscode(caretakerPasscode),
-    hashPasscode(familyPasscode),
-  ]);
-
-  // Remove existing demo circle if present
-  const existing = await prisma.careCircle.findUnique({
-    where: { code: circleCode },
+  // Clear existing demo circle if present to allow idempotent re-runs
+  const demoCode = 'CARE-1001';
+  const existingCircle = await prisma.careCircle.findUnique({
+    where: { code: demoCode },
   });
-  if (existing) {
-    await prisma.careCircle.delete({
-      where: { id: existing.id },
-    });
-    console.log('Cleaned up previous demo circle.');
+
+  if (existingCircle) {
+    console.log(`Cleaning up existing demo circle ${demoCode}...`);
+    await prisma.careCircle.delete({ where: { id: existingCircle.id } });
   }
 
-  // Create Care Circle
+  // 1. Passcodes and hashing
+  const demoPasscodes = {
+    elder: 'elder123',
+    caretaker: 'care123',
+    family: 'fam123',
+  };
+
+  const [elderHash, caretakerHash, familyHash] = await Promise.all([
+    hashPasscode(demoPasscodes.elder),
+    hashPasscode(demoPasscodes.caretaker),
+    hashPasscode(demoPasscodes.family),
+  ]);
+
+  // 2. Create CareCircle and Members
   const circle = await prisma.careCircle.create({
     data: {
-      code: circleCode,
-      name: "Grandma Rose's Care Circle",
-      elderName: 'Rose Dawson',
-      elderEmail: 'rose.dawson@carecircle.local',
+      code: demoCode,
+      name: "Eleanor Vance's Circle",
+      elderName: 'Eleanor Vance',
+      elderEmail: 'eleanor.vance@carecircle.local',
       elderPasscodeHash: elderHash,
       caretakerPasscodeHash: caretakerHash,
       familyPasscodeHash: familyHash,
-      emergencyContactName: 'Jack Dawson (Grandson)',
-      emergencyContactPhone: '(555) 234-5678',
-      notes: 'Penicillin allergy. Diabetic diet. Fall risk (uses walking cane). Preferred hospital: St. Jude Memorial.',
+      emergencyContactName: 'Dr. Robert Vance',
+      emergencyContactPhone: '+1 (555) 019-2831',
+      notes: 'Penicillin allergy. Prefers morning appointments.',
       members: {
         create: [
           {
             role: 'elder',
-            displayName: 'Rose Dawson',
+            displayName: 'Eleanor Vance',
             passcodeHash: elderHash,
           },
           {
             role: 'caretaker',
-            displayName: 'Nurse Sarah Jenkins',
+            displayName: 'Nurse Maria Santos',
             passcodeHash: caretakerHash,
           },
           {
             role: 'family',
-            displayName: 'Jack Dawson',
+            displayName: 'David Vance (Son)',
             passcodeHash: familyHash,
           },
         ],
       },
       circleMembers: {
         create: [
-          { role: 'elder', displayName: 'Rose Dawson' },
-          { role: 'caretaker', displayName: 'Nurse Sarah Jenkins' },
-          { role: 'family', displayName: 'Jack Dawson' },
+          {
+            role: 'elder',
+            displayName: 'Eleanor Vance',
+          },
+          {
+            role: 'caretaker',
+            displayName: 'Nurse Maria Santos',
+          },
+          {
+            role: 'family',
+            displayName: 'David Vance (Son)',
+          },
         ],
       },
     },
+    include: {
+      members: true,
+    },
   });
 
-  console.log(`Created Circle: ${circle.name} (${circle.code})`);
+  console.log(`✓ Created Demo Circle: "${circle.name}" [Code: ${circle.code}]`);
 
-  // Create Medications
-  const lisinopril = await prisma.medication.create({
-    data: {
-      circleId: circle.id,
+  // 3. Create 5 Medications
+  const medsData = [
+    {
       name: 'Lisinopril',
       dosage: '10mg',
-      frequency: 'DAILY',
-      times: JSON.stringify(['08:00']),
-      timesOfDay: JSON.stringify(['08:00']),
-      instructions: 'Take in the morning with a full glass of water. Keep track of morning blood pressure.',
-      purpose: 'Blood Pressure Control',
+      frequency: 'Once daily morning with water',
+      timesOfDay: ['08:00'],
+      instructions: 'Take 1 tablet every morning with a full glass of water.',
+      purpose: 'Hypertension (Blood Pressure)',
       pillCount: 28,
-      remainingQuantity: 28,
       refillThreshold: 5,
-      status: 'ACTIVE',
-      isActive: true,
-      createdByName: 'Nurse Sarah Jenkins',
-      createdByRole: 'caretaker',
     },
-  });
-
-  const metformin = await prisma.medication.create({
-    data: {
-      circleId: circle.id,
+    {
       name: 'Metformin',
       dosage: '500mg',
-      frequency: 'TWICE_DAILY',
-      times: JSON.stringify(['08:00', '19:00']),
-      timesOfDay: JSON.stringify(['08:00', '19:00']),
-      instructions: 'Take with food to minimize stomach discomfort. Do not crush tablets.',
-      purpose: 'Type 2 Diabetes Blood Sugar Regulation',
-      pillCount: 4,
-      remainingQuantity: 4,
-      refillThreshold: 7, // Low supply! Triggers refill reminder
-      status: 'ACTIVE',
-      isActive: true,
-      createdByName: 'Nurse Sarah Jenkins',
-      createdByRole: 'caretaker',
+      frequency: 'Twice daily with meals',
+      timesOfDay: ['08:00', '20:00'],
+      instructions: 'Take with breakfast and dinner to minimize stomach upset.',
+      purpose: 'Type 2 Diabetes',
+      pillCount: 46,
+      refillThreshold: 10,
     },
-  });
-
-  const atorvastatin = await prisma.medication.create({
-    data: {
-      circleId: circle.id,
+    {
       name: 'Atorvastatin',
       dosage: '20mg',
-      frequency: 'DAILY',
-      times: JSON.stringify(['20:00']),
-      timesOfDay: JSON.stringify(['20:00']),
-      instructions: 'Take once daily in the evening at bedtime.',
-      purpose: 'Cholesterol & Cardiovascular Health',
-      pillCount: 45,
-      remainingQuantity: 45,
-      refillThreshold: 10,
-      status: 'ACTIVE',
-      isActive: true,
-      createdByName: 'Nurse Sarah Jenkins',
-      createdByRole: 'caretaker',
-    },
-  });
-
-  const vitaminD = await prisma.medication.create({
-    data: {
-      circleId: circle.id,
-      name: 'Vitamin D3',
-      dosage: '1000 IU',
-      frequency: 'DAILY',
-      times: JSON.stringify(['12:00']),
-      timesOfDay: JSON.stringify(['12:00']),
-      instructions: 'Take with midday lunch.',
-      purpose: 'Bone Density & Immune Support',
-      pillCount: 60,
-      remainingQuantity: 60,
-      refillThreshold: 10,
-      status: 'ACTIVE',
-      isActive: true,
-      createdByName: 'Rose Dawson',
-      createdByRole: 'elder',
-    },
-  });
-
-  console.log('Seeded 4 Medications: Lisinopril, Metformin, Atorvastatin, Vitamin D3');
-
-  // Pending Change Request (for hackathon judges to immediately test elder approval workflow)
-  await prisma.medicationChangeRequest.create({
-    data: {
-      circleId: circle.id,
-      medicationId: lisinopril.id,
-      changeType: 'UPDATE',
-      status: 'PENDING',
-      currentData: JSON.stringify({
-        name: lisinopril.name,
-        dosage: lisinopril.dosage,
-        instructions: lisinopril.instructions,
-      }),
-      proposedData: JSON.stringify({
-        dosage: '20mg',
-        instructions: 'Take 20mg once daily in morning with full glass of water. Dosage adjusted following recent cardiology review.',
-      }),
-      requestedByRole: 'caretaker',
-      requestedByName: 'Nurse Sarah Jenkins',
-      reason: 'Dr. Chen recommended increasing to 20mg daily after home systolic readings averaged 145 last week.',
-    },
-  });
-
-  console.log('Seeded pending change request for Lisinopril dosage increase.');
-
-  // Helper date formatter
-  const formatDate = (d: Date) => d.toISOString().split('T')[0]!;
-  const today = new Date();
-  const todayStr = formatDate(today);
-
-  // Past 6 days adherence history
-  const adherenceEntries = [];
-  for (let i = 6; i >= 1; i--) {
-    const d = new Date();
-    d.setDate(today.getDate() - i);
-    const dateStr = formatDate(d);
-
-    adherenceEntries.push(
-      {
-        circleId: circle.id,
-        medicationId: lisinopril.id,
-        scheduledDate: dateStr,
-        scheduledTime: '08:00',
-        status: 'TAKEN',
-        takenAt: new Date(`${dateStr}T08:15:00Z`),
-        recordedByName: 'Rose Dawson',
-        recordedByRole: 'elder',
-      },
-      {
-        circleId: circle.id,
-        medicationId: metformin.id,
-        scheduledDate: dateStr,
-        scheduledTime: '08:00',
-        status: 'TAKEN',
-        takenAt: new Date(`${dateStr}T08:16:00Z`),
-        recordedByName: 'Rose Dawson',
-        recordedByRole: 'elder',
-      },
-      {
-        circleId: circle.id,
-        medicationId: vitaminD.id,
-        scheduledDate: dateStr,
-        scheduledTime: '12:00',
-        status: i === 3 ? 'SKIPPED' : 'TAKEN',
-        takenAt: i === 3 ? null : new Date(`${dateStr}T12:30:00Z`),
-        recordedByName: 'Rose Dawson',
-        recordedByRole: 'elder',
-        notes: i === 3 ? 'Lunch away with family, skipped midday supplement' : undefined,
-      },
-      {
-        circleId: circle.id,
-        medicationId: metformin.id,
-        scheduledDate: dateStr,
-        scheduledTime: '19:00',
-        status: 'TAKEN',
-        takenAt: new Date(`${dateStr}T19:20:00Z`),
-        recordedByName: 'Rose Dawson',
-        recordedByRole: 'elder',
-      },
-      {
-        circleId: circle.id,
-        medicationId: atorvastatin.id,
-        scheduledDate: dateStr,
-        scheduledTime: '20:00',
-        status: 'TAKEN',
-        takenAt: new Date(`${dateStr}T20:10:00Z`),
-        recordedByName: 'Rose Dawson',
-        recordedByRole: 'elder',
-      }
-    );
-  }
-
-  // Today's doses
-  adherenceEntries.push(
-    {
-      circleId: circle.id,
-      medicationId: lisinopril.id,
-      scheduledDate: todayStr,
-      scheduledTime: '08:00',
-      status: 'TAKEN',
-      takenAt: new Date(`${todayStr}T08:05:00Z`),
-      recordedByName: 'Rose Dawson',
-      recordedByRole: 'elder',
+      frequency: 'Once daily at bedtime',
+      timesOfDay: ['21:00'],
+      instructions: 'Take at night before bed.',
+      purpose: 'Cholesterol & Heart Protection',
+      pillCount: 4, // Below threshold -> triggers refill warning
+      refillThreshold: 5,
     },
     {
-      circleId: circle.id,
-      medicationId: metformin.id,
-      scheduledDate: todayStr,
-      scheduledTime: '08:00',
-      status: 'TAKEN',
-      takenAt: new Date(`${todayStr}T08:06:00Z`),
-      recordedByName: 'Rose Dawson',
-      recordedByRole: 'elder',
+      name: 'Levothyroxine',
+      dosage: '50mcg',
+      frequency: 'Once daily 30m before breakfast',
+      timesOfDay: ['07:00'],
+      instructions: 'Take immediately upon waking on an empty stomach.',
+      purpose: 'Hypothyroidism',
+      pillCount: 26,
+      refillThreshold: 5,
     },
     {
-      circleId: circle.id,
-      medicationId: vitaminD.id,
-      scheduledDate: todayStr,
-      scheduledTime: '12:00',
-      status: 'PENDING',
-      takenAt: null,
-      recordedByName: null,
-      recordedByRole: null,
-    },
-    {
-      circleId: circle.id,
-      medicationId: metformin.id,
-      scheduledDate: todayStr,
-      scheduledTime: '19:00',
-      status: 'PENDING',
-      takenAt: null,
-      recordedByName: null,
-      recordedByRole: null,
-    },
-    {
-      circleId: circle.id,
-      medicationId: atorvastatin.id,
-      scheduledDate: todayStr,
-      scheduledTime: '20:00',
-      status: 'PENDING',
-      takenAt: null,
-      recordedByName: null,
-      recordedByRole: null,
-    }
-  );
-
-  for (const entry of adherenceEntries) {
-    await prisma.adherenceLog.create({ data: entry });
-  }
-  console.log(`Seeded ${adherenceEntries.length} adherence logs over 7 days.`);
-
-  // Scheduled Appointments
-  const tomorrow = new Date();
-  tomorrow.setDate(today.getDate() + 1);
-  tomorrow.setHours(10, 30, 0, 0);
-
-  const nextWeek = new Date();
-  nextWeek.setDate(today.getDate() + 5);
-  nextWeek.setHours(14, 0, 0, 0);
-
-  await prisma.appointment.createMany({
-    data: [
-      {
-        circleId: circle.id,
-        title: 'Cardiology Follow-up with Dr. Chen',
-        doctorName: 'Dr. Alexander Chen, MD',
-        location: 'St. Jude Medical Pavilion, Suite 402',
-        dateTime: tomorrow,
-        notes: 'Bring home blood pressure log from the last 14 days and list of questions.',
-        status: 'UPCOMING',
-        createdByRole: 'caretaker',
-        createdByName: 'Nurse Sarah Jenkins',
-      },
-      {
-        circleId: circle.id,
-        title: 'Endocrinology Routine Review',
-        doctorName: 'Dr. Emily Taylor, MD',
-        location: 'Metro Health Pavilion, Clinic B',
-        dateTime: nextWeek,
-        notes: 'Fasting lab work required 2 hours prior to visit at central laboratory.',
-        status: 'UPCOMING',
-        createdByRole: 'caretaker',
-        createdByName: 'Nurse Sarah Jenkins',
-      },
-    ],
-  });
-  console.log('Seeded 2 Upcoming Appointments.');
-
-  // Vital Logs (past 4 days)
-  const vitalsData = [
-    {
-      daysAgo: 3,
-      sys: 138,
-      dia: 84,
-      sugar: 118,
-      hr: 72,
-      mood: 'GOOD',
-      notes: 'Morning reading before breakfast. Felt well rested.',
-    },
-    {
-      daysAgo: 2,
-      sys: 142,
-      dia: 86,
-      sugar: 124,
-      hr: 74,
-      mood: 'OKAY',
-      notes: 'Mild headache in the afternoon; blood pressure slightly elevated.',
-    },
-    {
-      daysAgo: 1,
-      sys: 136,
-      dia: 82,
-      sugar: 114,
-      hr: 70,
-      mood: 'GREAT',
-      notes: 'Took a 20-minute walk around the garden.',
-    },
-    {
-      daysAgo: 0,
-      sys: 130,
-      dia: 80,
-      sugar: 108,
-      hr: 68,
-      mood: 'GREAT',
-      notes: 'Feeling energized today after healthy breakfast.',
+      name: 'Omeprazole',
+      dosage: '20mg',
+      frequency: 'Once daily before morning meal',
+      timesOfDay: ['08:00'],
+      instructions: 'Swallow whole with water.',
+      purpose: 'Acid Reflux / GERD',
+      pillCount: 20,
+      refillThreshold: 5,
     },
   ];
 
-  for (const v of vitalsData) {
-    const vDate = new Date();
-    vDate.setDate(today.getDate() - v.daysAgo);
-    vDate.setHours(8, 30, 0, 0);
-
-    await prisma.vitalLog.create({
+  const createdMeds = [];
+  for (const m of medsData) {
+    const timesJson = JSON.stringify(m.timesOfDay);
+    const med = await prisma.medication.create({
       data: {
         circleId: circle.id,
-        recordedAt: vDate,
-        bloodPressureSystolic: v.sys,
-        bloodPressureDiastolic: v.dia,
-        bloodSugar: v.sugar,
-        heartRate: v.hr,
-        mood: v.mood,
-        notes: v.notes,
-        recordedByRole: 'elder',
-        recordedByName: 'Rose Dawson',
+        name: m.name,
+        dosage: m.dosage,
+        frequency: m.frequency,
+        status: 'ACTIVE',
+        times: timesJson,
+        timesOfDay: timesJson,
+        instructions: m.instructions,
+        purpose: m.purpose,
+        pillCount: m.pillCount,
+        remainingQuantity: m.pillCount,
+        refillThreshold: m.refillThreshold,
+        isActive: true,
+        createdByRole: 'elder',
+        createdByName: 'Eleanor Vance',
       },
     });
+    createdMeds.push(med);
+    console.log(`  - Med: ${med.name} (${med.dosage}) - ${med.remainingQuantity} pills left`);
   }
-  console.log('Seeded 4 Vital health records.');
 
-  // Notification Logs
-  await prisma.notificationLog.createMany({
-    data: [
-      {
+  // 4. Create 14 days of dose history
+  console.log('\nGenerating 14 days of historical DoseLogs & AdherenceLogs...');
+  const now = new Date();
+  let historyLogsCount = 0;
+
+  for (let d = 14; d >= 1; d--) {
+    const targetDate = new Date(now);
+    targetDate.setDate(now.getDate() - d);
+    const dateStr = getCurrentDateString(targetDate);
+
+    for (const med of createdMeds) {
+      const times: string[] = JSON.parse(med.timesOfDay);
+      for (const time of times) {
+        // Deterministic realistic adherence pattern
+        // Mostly TAKEN, occasional SKIPPED or MISSED
+        const rand = (d * 17 + med.name.length * 7 + time.charCodeAt(1)) % 100;
+        let status = 'TAKEN';
+        let notes: string | null = null;
+        let takenAt: Date | null = null;
+
+        if (rand < 82) {
+          status = 'TAKEN';
+          const [h, min] = time.split(':').map(Number);
+          const tDate = new Date(targetDate);
+          tDate.setHours(h, min + 5, 0, 0);
+          takenAt = tDate;
+        } else if (rand < 92) {
+          status = 'SKIPPED';
+          notes = 'Mild nausea reported before scheduled dose';
+        } else {
+          status = 'MISSED';
+          notes = 'Dose not taken within time window';
+        }
+
+        await Promise.all([
+          prisma.doseLog.create({
+            data: {
+              circleId: circle.id,
+              medicationId: med.id,
+              scheduledDate: dateStr,
+              scheduledTime: time,
+              status,
+              takenAt,
+              recordedByRole: status === 'TAKEN' ? 'elder' : 'caretaker',
+              recordedByName: status === 'TAKEN' ? 'Eleanor Vance' : 'Nurse Maria Santos',
+              notes,
+            },
+          }),
+          prisma.adherenceLog.create({
+            data: {
+              circleId: circle.id,
+              medicationId: med.id,
+              scheduledDate: dateStr,
+              scheduledTime: time,
+              status,
+              takenAt,
+              recordedByRole: status === 'TAKEN' ? 'elder' : 'caretaker',
+              recordedByName: status === 'TAKEN' ? 'Eleanor Vance' : 'Nurse Maria Santos',
+              notes,
+            },
+          }),
+        ]);
+        historyLogsCount++;
+      }
+    }
+  }
+
+  // Doses for Today
+  const todayStr = getCurrentDateString(now);
+  for (const med of createdMeds) {
+    const times: string[] = JSON.parse(med.timesOfDay);
+    for (const time of times) {
+      // 07:00 dose already taken, others pending
+      const isMorningTaken = time === '07:00';
+      await Promise.all([
+        prisma.doseLog.create({
+          data: {
+            circleId: circle.id,
+            medicationId: med.id,
+            scheduledDate: todayStr,
+            scheduledTime: time,
+            status: isMorningTaken ? 'TAKEN' : 'PENDING',
+            takenAt: isMorningTaken ? new Date() : null,
+            recordedByRole: isMorningTaken ? 'elder' : 'system',
+            recordedByName: isMorningTaken ? 'Eleanor Vance' : 'Scheduled',
+          },
+        }),
+        prisma.adherenceLog.create({
+          data: {
+            circleId: circle.id,
+            medicationId: med.id,
+            scheduledDate: todayStr,
+            scheduledTime: time,
+            status: isMorningTaken ? 'TAKEN' : 'PENDING',
+            takenAt: isMorningTaken ? new Date() : null,
+            recordedByRole: isMorningTaken ? 'elder' : 'system',
+            recordedByName: isMorningTaken ? 'Eleanor Vance' : 'Scheduled',
+          },
+        }),
+      ]);
+      historyLogsCount++;
+    }
+  }
+  console.log(`✓ Generated ${historyLogsCount} historical and scheduled dose records`);
+
+  // 5. Create 4 Appointments with questions Json
+  console.log('\nCreating 4 appointments...');
+  const apptsData = [
+    {
+      title: 'Cardiology Review & Echo Exam',
+      doctorName: 'Dr. William Bell',
+      location: 'St. Jude Heart Center, Suite 300',
+      dateTime: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000), // 2 days future
+      notes: 'Bring BP log from the past 2 weeks.',
+      questions: [
+        'Review Lisinopril dosage based on recent morning readings',
+        'Inquire about mild evening ankle swelling',
+        'Confirm if echocardiogram results from last month are available',
+      ],
+      status: 'UPCOMING',
+    },
+    {
+      title: 'Diabetic Retinopathy Screening',
+      doctorName: 'Dr. Clara Oswald',
+      location: 'Metropolitan Eye Clinic, Room 102',
+      dateTime: new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000), // 8 days future
+      notes: 'Eyes will be dilated; arranged transport with David.',
+      questions: [
+        'Annual diabetic retinal scan checkup',
+        'Discuss occasional dryness in right eye',
+      ],
+      status: 'UPCOMING',
+    },
+    {
+      title: 'Routine Blood Work (Fasting Panel)',
+      doctorName: 'Dr. John Watson',
+      location: 'Quest Diagnostics West Center',
+      dateTime: new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000), // 15 days future
+      notes: 'Fasting required for 10 hours prior to appointment.',
+      questions: [
+        'Fasting Blood Glucose and HbA1c',
+        'Comprehensive Lipid Profile (Statin efficacy check)',
+        'Kidney & Liver Panel (GFR, Creatinine, AST/ALT)',
+      ],
+      status: 'UPCOMING',
+    },
+    {
+      title: 'Comprehensive Geriatric Annual Assessment',
+      doctorName: 'Dr. John Watson',
+      location: 'Baker Street Medical Practice',
+      dateTime: new Date(now.getTime() - 25 * 24 * 60 * 60 * 1000), // 25 days past
+      notes: 'Annual physical completed. Eleanor is alert and well.',
+      questions: [
+        'Cognitive screening (MMSE score: 29/30)',
+        'Mobility & fall risk assessment (Low risk)',
+      ],
+      status: 'COMPLETED',
+    },
+  ];
+
+  for (const a of apptsData) {
+    const appt = await prisma.appointment.create({
+      data: {
         circleId: circle.id,
-        type: 'LOW_REFILL',
-        title: 'Low Refill Alert: Metformin',
-        message: 'Metformin has only 4 tablets remaining (threshold is 7). Please contact pharmacy for a refill.',
-        isRead: false,
-        emailSent: true,
+        title: a.title,
+        doctorName: a.doctorName,
+        location: a.location,
+        dateTime: a.dateTime,
+        notes: a.notes,
+        questions: JSON.stringify(a.questions),
+        status: a.status,
+        createdByRole: 'caretaker',
+        createdByName: 'Nurse Maria Santos',
       },
-      {
-        circleId: circle.id,
-        type: 'PENDING_APPROVAL',
-        title: 'Medication Change Awaiting Approval',
-        message: 'Nurse Sarah requested dosage update for Lisinopril (10mg -> 20mg). Needs Rose Dawson approval.',
-        isRead: false,
-        emailSent: true,
-      },
-      {
-        circleId: circle.id,
-        type: 'APPOINTMENT',
-        title: 'Upcoming Appointment Tomorrow',
-        message: 'Cardiology Follow-up with Dr. Alexander Chen tomorrow at 10:30 AM.',
-        isRead: true,
-        emailSent: true,
-      },
-    ],
+    });
+    console.log(`  - Appt: [${appt.status}] ${appt.title} with ${appt.doctorName}`);
+  }
+
+  // 6. Create Low Refill Notification with Dedupe
+  await prisma.notificationLog.create({
+    data: {
+      circleId: circle.id,
+      type: 'LOW_REFILL',
+      title: 'Low Refill Alert: Atorvastatin',
+      message: 'Atorvastatin (20mg) has only 4 pills remaining (threshold: 5).',
+      dedupeKey: `refill-warning:${createdMeds[2].id}:4`,
+      isRead: false,
+      emailSent: true,
+    },
   });
-  console.log('Seeded 3 Notifications.');
 
-  // Activity Log audit trail
-  await prisma.activityLog.createMany({
-    data: [
-      {
-        circleId: circle.id,
-        action: 'CIRCLE_CREATED',
-        description: 'Care Circle created for Rose Dawson',
-        actorRole: 'elder',
-        actorName: 'Rose Dawson',
-      },
-      {
-        circleId: circle.id,
-        action: 'MEDICATION_CREATED',
-        description: 'Nurse Sarah Jenkins added Metformin 500mg',
-        actorRole: 'caretaker',
-        actorName: 'Nurse Sarah Jenkins',
-      },
-      {
-        circleId: circle.id,
-        action: 'CHANGE_REQUEST_CREATED',
-        description: 'Nurse Sarah Jenkins requested update for Lisinopril dosage to 20mg',
-        actorRole: 'caretaker',
-        actorName: 'Nurse Sarah Jenkins',
-      },
-      {
-        circleId: circle.id,
-        action: 'DOSE_TAKEN',
-        description: 'Rose Dawson took Lisinopril 10mg scheduled for 08:00',
-        actorRole: 'elder',
-        actorName: 'Rose Dawson',
-      },
-      {
-        circleId: circle.id,
-        action: 'DOSE_TAKEN',
-        description: 'Rose Dawson took Metformin 500mg scheduled for 08:00',
-        actorRole: 'elder',
-        actorName: 'Rose Dawson',
-      },
-    ],
+  // 7. Audit log for seed creation
+  await prisma.auditLog.create({
+    data: {
+      circleId: circle.id,
+      action: 'ENVIRONMENT_SEEDED',
+      actorRole: 'system',
+      actorName: 'Seed Script',
+      details: 'Populated demo care circle with 5 meds, 14 days history, and 4 appointments',
+    },
   });
-  console.log('Seeded Activity audit trail.');
 
-  console.log('\n=============================================');
-  console.log('CareCircle Demo Data Seeded Successfully!');
-  console.log('=============================================');
-  console.log(`Circle Code:        ${circleCode}`);
-  console.log(`Elder Passcode:     ${elderPasscode} (Role: elder - Rose Dawson)`);
-  console.log(`Caretaker Passcode: ${caretakerPasscode} (Role: caretaker - Nurse Sarah)`);
-  console.log(`Family Passcode:    ${familyPasscode} (Role: family - Jack Dawson)`);
-  console.log('=============================================\n');
+  console.log('\n======================================================');
+  console.log('   🎉 DEMO CARE CIRCLE CREATED SUCCESSFULLY!');
+  console.log('======================================================');
+  console.log(` Circle Code : ${circle.code}`);
+  console.log(` Elder Name  : ${circle.elderName}`);
+  console.log('------------------------------------------------------');
+  console.log(' KNOWN DEMO PASSCODES:');
+  console.log(`   🔑 Elder Passcode     : ${demoPasscodes.elder}`);
+  console.log(`   🔑 Caretaker Passcode : ${demoPasscodes.caretaker}`);
+  console.log(`   🔑 Family Passcode    : ${demoPasscodes.family}`);
+  console.log('------------------------------------------------------');
+  console.log(' Medications : 5 (Lisinopril, Metformin, Atorvastatin, Levothyroxine, Omeprazole)');
+  console.log(' Dose History: 14 days of realistic logs');
+  console.log(' Appointments: 4 (3 upcoming, 1 completed with questions JSON)');
+  console.log('======================================================\n');
 }
 
 seed()
   .catch((e) => {
-    console.error('Failed to seed database:', e);
+    console.error('Seed script error:', e);
     process.exit(1);
   })
   .finally(async () => {

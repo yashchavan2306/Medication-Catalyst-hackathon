@@ -375,15 +375,14 @@ export const ElderTodayPage: React.FC = () => {
                   style={{
                     padding: '28px',
                     borderRadius: 'var(--radius-lg)',
-                    border: `3px solid ${
-                      isTaken
+                    border: `3px solid ${isTaken
                         ? 'var(--color-success-border)'
                         : isSkipped
                           ? 'var(--color-warning-border)'
                           : isSnoozed
                             ? 'var(--color-primary)'
                             : 'var(--color-border-strong)'
-                    }`,
+                      }`,
                     backgroundColor: isTaken ? 'var(--color-success-bg)' : 'var(--color-surface)',
                     boxShadow: 'var(--shadow-md)',
                   }}

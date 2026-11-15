@@ -6,4 +6,5 @@ build
 coverage
 *.sqlite
 *.sqlite-journal
+*.db-journal
 .DS_Store
