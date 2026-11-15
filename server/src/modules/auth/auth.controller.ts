@@ -1,81 +1,20 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
-import { hashPasscode, comparePasscode } from '../../utils/password.js';
+import { env } from '../../config/env.js';
+import { comparePasscode } from '../../utils/password.js';
 import { signMemberToken } from '../../utils/jwt.js';
-import { generateCircleCode } from '../../utils/codeGenerator.js';
+import { recordActivity } from '../../utils/activity.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { Role } from '../../types/auth.js';
-import type { CreateCircleInput, LoginInput } from './auth.schema.js';
+import type { LoginInput } from './auth.schema.js';
 
-/**
- * Controller: Handles circle creation and authentication.
- */
-export async function createCircle(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const input: CreateCircleInput = req.body;
-
-    // Generate unique circle code
-    let code = generateCircleCode();
-    let collision = await prisma.careCircle.findUnique({ where: { code } });
-    while (collision) {
-      code = generateCircleCode();
-      collision = await prisma.careCircle.findUnique({ where: { code } });
-    }
-
-    const [elderHash, caretakerHash, familyHash] = await Promise.all([
-      hashPasscode(input.elderPasscode),
-      hashPasscode(input.caretakerPasscode),
-      hashPasscode(input.familyPasscode),
-    ]);
-
-    const circle = await prisma.careCircle.create({
-      data: {
-        code,
-        name: input.name,
-        elderName: input.elderName,
-        elderPasscodeHash: elderHash,
-        caretakerPasscodeHash: caretakerHash,
-        familyPasscodeHash: familyHash,
-        emergencyContactName: input.emergencyContactName,
-        emergencyContactPhone: input.emergencyContactPhone,
-        notes: input.notes,
-        members: {
-          create: {
-            role: 'elder',
-            displayName: input.elderName,
-          },
-        },
-      },
-    });
-
-    const memberPayload = {
-      circleId: circle.id,
-      role: 'elder' as Role,
-      displayName: input.elderName,
-    };
-
-    const token = signMemberToken(memberPayload);
-
-    res.status(201).json({
-      token,
-      member: memberPayload,
-      circle: {
-        id: circle.id,
-        code: circle.code,
-        name: circle.name,
-        elderName: circle.elderName,
-        emergencyContactName: circle.emergencyContactName,
-        emergencyContactPhone: circle.emergencyContactPhone,
-        notes: circle.notes,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-}
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+const LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Controller: Authenticates a member by circle code and role passcode.
+ * Enforces 5-failure lockout, sets HttpOnly SameSite=Lax cookie, returns { member, token }.
  */
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -83,26 +22,131 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 
     const circle = await prisma.careCircle.findUnique({
       where: { code: circleCode },
+      include: {
+        members: true,
+      },
     });
 
     if (!circle) {
       throw new AppError('Invalid circle code or passcode', 401, 'INVALID_CREDENTIALS');
     }
 
-    // Verify which role matches the provided passcode
-    let matchedRole: Role | null = null;
+    const now = new Date();
 
-    if (await comparePasscode(passcode, circle.elderPasscodeHash)) {
-      matchedRole = 'elder';
-    } else if (await comparePasscode(passcode, circle.caretakerPasscodeHash)) {
-      matchedRole = 'caretaker';
-    } else if (await comparePasscode(passcode, circle.familyPasscodeHash)) {
-      matchedRole = 'family';
+    // Check circle-wide lockout
+    if (circle.lockedUntil && circle.lockedUntil > now) {
+      throw new AppError(
+        'Account is locked due to 5 consecutive failed attempts. Please try again later.',
+        429,
+        'ACCOUNT_LOCKED'
+      );
     }
 
+    let matchedRole: Role | null = null;
+    let matchedMemberId: string | undefined;
+
+    // Check members table first
+    if (circle.members && circle.members.length > 0) {
+      for (const member of circle.members) {
+        if (member.lockedUntil && member.lockedUntil > now) {
+          throw new AppError(
+            'Account is locked due to 5 consecutive failed attempts. Please try again later.',
+            429,
+            'ACCOUNT_LOCKED'
+          );
+        }
+        if (member.passcodeHash && (await comparePasscode(passcode, member.passcodeHash))) {
+          matchedRole = member.role as Role;
+          matchedMemberId = member.id;
+          break;
+        }
+      }
+    }
+
+    // Fall back to circle passcode hashes if not matched yet
     if (!matchedRole) {
+      if (circle.elderPasscodeHash && (await comparePasscode(passcode, circle.elderPasscodeHash))) {
+        matchedRole = 'elder';
+      } else if (
+        circle.caretakerPasscodeHash &&
+        (await comparePasscode(passcode, circle.caretakerPasscodeHash))
+      ) {
+        matchedRole = 'caretaker';
+      } else if (
+        circle.familyPasscodeHash &&
+        (await comparePasscode(passcode, circle.familyPasscodeHash))
+      ) {
+        matchedRole = 'family';
+      }
+    }
+
+    // Passcode failed: increment failure count and enforce lockout
+    if (!matchedRole) {
+      const newFailures = (circle.failedLoginAttempts || 0) + 1;
+      const isLockout = newFailures >= LOCKOUT_THRESHOLD;
+      const lockedUntil = isLockout ? new Date(now.getTime() + LOCKOUT_DURATION_MS) : null;
+
+      await Promise.all([
+        prisma.careCircle.update({
+          where: { id: circle.id },
+          data: {
+            failedLoginAttempts: newFailures,
+            lockedUntil,
+          },
+        }),
+        prisma.member.updateMany({
+          where: { circleId: circle.id },
+          data: {
+            failedAttempts: newFailures,
+            lockedUntil,
+          },
+        }),
+      ]);
+
+      if (isLockout) {
+        await recordActivity({
+          circleId: circle.id,
+          action: 'LOGIN_LOCKOUT',
+          description: `Care Circle locked out after 5 consecutive failed login attempts`,
+          actorRole: 'unknown',
+          actorName: 'Unknown',
+        });
+
+        throw new AppError(
+          'Account is locked due to 5 consecutive failed attempts. Please try again later.',
+          429,
+          'ACCOUNT_LOCKED'
+        );
+      }
+
+      await recordActivity({
+        circleId: circle.id,
+        action: 'LOGIN_FAILED',
+        description: `Failed login attempt (attempt ${newFailures}/5)`,
+        actorRole: 'unknown',
+        actorName: 'Unknown',
+      });
+
       throw new AppError('Invalid circle code or passcode', 401, 'INVALID_CREDENTIALS');
     }
+
+    // Login successful: reset failure counts and lockout
+    await Promise.all([
+      prisma.careCircle.update({
+        where: { id: circle.id },
+        data: {
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+      prisma.member.updateMany({
+        where: { circleId: circle.id },
+        data: {
+          failedAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+    ]);
 
     const resolvedName =
       displayName?.trim() ||
@@ -114,23 +158,45 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 
     const memberPayload = {
       circleId: circle.id,
+      memberId: matchedMemberId,
       role: matchedRole,
       displayName: resolvedName,
     };
 
     const token = signMemberToken(memberPayload);
 
+    // Set HttpOnly SameSite=Lax cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: COOKIE_MAX_AGE,
+      path: '/',
+    });
+
+    await recordActivity({
+      circleId: circle.id,
+      action: 'MEMBER_LOGIN',
+      description: `${resolvedName} signed in as ${matchedRole}`,
+      actorRole: matchedRole,
+      actorName: resolvedName,
+    });
+
     res.json({
+      member: {
+        circleId: circle.id,
+        role: matchedRole,
+        displayName: resolvedName,
+        circleCode: circle.code,
+        elderName: circle.elderName,
+      },
       token,
-      member: memberPayload,
       circle: {
         id: circle.id,
         code: circle.code,
         name: circle.name,
         elderName: circle.elderName,
-        emergencyContactName: circle.emergencyContactName,
-        emergencyContactPhone: circle.emergencyContactPhone,
-        notes: circle.notes,
+        elderEmail: circle.elderEmail,
       },
     });
   } catch (err) {
@@ -139,22 +205,43 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 }
 
 /**
- * Controller: Returns authenticated member profile and circle info.
+ * Controller: Clears HttpOnly authentication cookie.
+ */
+export function logout(_req: Request, res: Response): void {
+  res.clearCookie('token', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: env.NODE_ENV === 'production',
+    path: '/',
+  });
+  res.clearCookie('carecircle_token', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: env.NODE_ENV === 'production',
+    path: '/',
+  });
+  res.json({ message: 'Logged out successfully' });
+}
+
+/**
+ * Controller: Returns authenticated member profile and circle details.
  * Identity read strictly from req.member via attachMember.
  */
 export async function getMe(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    if (!req.member) {
+    const member = req.member;
+    if (!member) {
       throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
     }
 
     const circle = await prisma.careCircle.findUnique({
-      where: { id: req.member.circleId },
+      where: { id: member.circleId },
       select: {
         id: true,
         code: true,
         name: true,
         elderName: true,
+        elderEmail: true,
         emergencyContactName: true,
         emergencyContactPhone: true,
         notes: true,
@@ -167,7 +254,7 @@ export async function getMe(req: Request, res: Response, next: NextFunction): Pr
     }
 
     res.json({
-      member: req.member,
+      member,
       circle,
     });
   } catch (err) {

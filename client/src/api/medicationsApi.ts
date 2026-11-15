@@ -1,5 +1,5 @@
 import { apiFetch } from './client.js';
-import type { Medication, MedicationChangeRequest, DailyScheduleResponse } from '../types/medication.js';
+import type { Medication, MedicationChangeRequest, TodayDosesResponse, TodayDose } from '../types/medication.js';
 
 export async function getMedicationsApi(includeInactive = false): Promise<Medication[]> {
   return apiFetch<Medication[]>(`/medications?includeInactive=${includeInactive}`);
@@ -31,7 +31,7 @@ export async function updateMedicationApi(
   changeRequest?: MedicationChangeRequest;
 }> {
   return apiFetch(`/medications/${id}`, {
-    method: 'PATCH',
+    method: 'PUT',
     body: JSON.stringify(data),
   });
 }
@@ -64,33 +64,26 @@ export async function rejectRequestApi(id: string, reviewNotes?: string): Promis
   });
 }
 
-export async function getDailyScheduleApi(date?: string): Promise<DailyScheduleResponse> {
-  const query = date ? `?date=${encodeURIComponent(date)}` : '';
-  return apiFetch<DailyScheduleResponse>(`/adherence/today${query}`);
+export async function getTodayDosesApi(): Promise<TodayDosesResponse> {
+  return apiFetch<TodayDosesResponse>('/today');
 }
 
-export async function logDoseApi(input: {
-  medicationId: string;
-  scheduledDate: string;
-  scheduledTime: string;
-  status: 'TAKEN' | 'SKIPPED' | 'MISSED';
-  notes?: string;
-}): Promise<{ message: string; remainingQuantity: number }> {
-  return apiFetch('/adherence/log', {
+export async function takeDoseApi(id: string): Promise<{ message: string; dose: TodayDose; remainingQuantity: number }> {
+  return apiFetch(`/doses/${id}/take`, {
     method: 'POST',
-    body: JSON.stringify(input),
   });
 }
 
-export async function getAdherenceStatsApi(days = 7): Promise<{
-  periodDays: number;
-  summary: {
-    taken: number;
-    skipped: number;
-    missed: number;
-    totalLogged: number;
-    adherenceRate: number;
-  };
-}> {
-  return apiFetch(`/adherence/stats?days=${days}`);
+export async function skipDoseApi(id: string, reason?: string): Promise<{ message: string; dose: TodayDose }> {
+  return apiFetch(`/doses/${id}/skip`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function snoozeDoseApi(id: string, minutes = 30): Promise<{ message: string; dose: TodayDose }> {
+  return apiFetch(`/doses/${id}/snooze`, {
+    method: 'POST',
+    body: JSON.stringify({ minutes }),
+  });
 }

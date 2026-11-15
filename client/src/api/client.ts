@@ -15,28 +15,36 @@ export class ApiError extends Error {
 }
 
 /**
- * Common fetch wrapper attaching Bearer token and parsing uniform JSON error responses.
+ * Common fetch wrapper attaching X-Requested-With header, credentials: 'include',
+ * Bearer token fallback, and parsing uniform JSON error responses.
  */
 export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem('carecircle_token');
+  const token = typeof window !== 'undefined' ? localStorage.getItem('carecircle_token') : null;
   const headers = new Headers(options.headers || {});
 
-  headers.set('Content-Type', 'application/json');
-  if (token) {
+  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  headers.set('X-Requested-With', 'XMLHttpRequest');
+
+  if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
+    credentials: 'include',
     headers,
   });
 
-  const data = await response.json().catch(() => null);
+  const contentType = response.headers.get('content-type');
+  const isJson = contentType && contentType.includes('application/json');
+  const data = isJson ? await response.json().catch(() => null) : await response.text().catch(() => null);
 
   if (!response.ok) {
-    const errorData = data?.error || {};
+    const errorData = (isJson && data && typeof data === 'object' && 'error' in data) ? (data as { error: { message?: string; code?: string; details?: unknown } }).error : {};
     throw new ApiError(
-      errorData.message || `Request failed with status ${response.status}`,
+      errorData.message || (typeof data === 'string' && data.length < 120 ? data : `Request failed with status ${response.status}`),
       response.status,
       errorData.code || 'REQUEST_FAILED',
       errorData.details

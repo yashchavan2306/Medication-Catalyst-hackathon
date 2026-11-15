@@ -8,6 +8,7 @@ export type Role = 'elder' | 'caretaker' | 'family';
 
 export interface AuthMember {
   circleId: string;
+  memberId?: string;
   role: Role;
   displayName: string;
 }

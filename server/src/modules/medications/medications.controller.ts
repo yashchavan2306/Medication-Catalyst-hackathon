@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
+import { recordActivity } from '../../utils/activity.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { CreateMedicationInput, UpdateMedicationInput } from './medications.schema.js';
 
@@ -82,7 +83,7 @@ export async function getMedicationById(req: Request, res: Response, next: NextF
 
 /**
  * Controller: Create medication.
- * - Elder: direct creation.
+ * - Elder: direct creation with immediate effect.
  * - Caretaker: creates a pending change request for elder approval.
  */
 export async function createMedication(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -111,6 +112,14 @@ export async function createMedication(req: Request, res: Response, next: NextFu
           createdByRole: member.role,
           createdByName: member.displayName,
         },
+      });
+
+      await recordActivity({
+        circleId: member.circleId,
+        action: 'MEDICATION_CREATED',
+        description: `${member.displayName} added medication "${input.name}" (${input.dosage})`,
+        actorRole: member.role,
+        actorName: member.displayName,
       });
 
       res.status(201).json({
@@ -148,7 +157,6 @@ export async function createMedication(req: Request, res: Response, next: NextFu
       },
     });
 
-    // Notify circle of pending approval
     await prisma.notificationLog.create({
       data: {
         circleId: member.circleId,
@@ -156,6 +164,14 @@ export async function createMedication(req: Request, res: Response, next: NextFu
         title: 'New Medication Awaiting Approval',
         message: `${member.displayName} requested to add medication "${input.name}". Elder approval required.`,
       },
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'MEDICATION_CHANGE_REQUESTED',
+      description: `${member.displayName} requested approval to add "${input.name}"`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.status(202).json({
@@ -208,6 +224,14 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
           ...(input.remainingQuantity !== undefined ? { remainingQuantity: input.remainingQuantity } : {}),
           ...(input.refillThreshold !== undefined ? { refillThreshold: input.refillThreshold } : {}),
         },
+      });
+
+      await recordActivity({
+        circleId: member.circleId,
+        action: 'MEDICATION_UPDATED',
+        description: `${member.displayName} updated medication "${existing.name}"`,
+        actorRole: member.role,
+        actorName: member.displayName,
       });
 
       res.json({
@@ -267,6 +291,14 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
       },
     });
 
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'MEDICATION_CHANGE_REQUESTED',
+      description: `${member.displayName} requested update to "${existing.name}"`,
+      actorRole: member.role,
+      actorName: member.displayName,
+    });
+
     res.status(202).json({
       status: 'PENDING_APPROVAL',
       message: 'Medication change submitted for elder approval',
@@ -305,6 +337,14 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
         data: { isActive: false },
       });
 
+      await recordActivity({
+        circleId: member.circleId,
+        action: 'MEDICATION_DEACTIVATED',
+        description: `${member.displayName} deactivated medication "${existing.name}"`,
+        actorRole: member.role,
+        actorName: member.displayName,
+      });
+
       res.json({
         status: 'DEACTIVATED',
         message: `Medication "${existing.name}" deactivated`,
@@ -340,6 +380,14 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
         title: 'Medication Deletion Awaiting Approval',
         message: `${member.displayName} requested to remove "${existing.name}". Elder approval required.`,
       },
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'MEDICATION_CHANGE_REQUESTED',
+      description: `${member.displayName} requested deactivation of "${existing.name}"`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.status(202).json({

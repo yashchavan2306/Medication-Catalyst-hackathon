@@ -30,7 +30,13 @@ appointmentsRouter.post(
   createAppointment
 );
 
-// Update appointment (elder or caretaker)
+// Update appointment (supports PUT as requested and PATCH)
+appointmentsRouter.put(
+  '/:id',
+  requireRole('elder', 'caretaker'),
+  validate({ params: appointmentIdParamSchema, body: updateAppointmentSchema }),
+  updateAppointment
+);
 appointmentsRouter.patch(
   '/:id',
   requireRole('elder', 'caretaker'),

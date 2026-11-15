@@ -52,3 +52,21 @@
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
 }
+
+:root[data-text-size="large"] {
+  --font-size-base: 21px;
+  --font-size-sm: 18px;
+  --font-size-lg: 24px;
+  --font-size-xl: 28px;
+  --font-size-2xl: 32px;
+  --font-size-3xl: 38px;
+}
+
+:root[data-text-size="xlarge"] {
+  --font-size-base: 24px;
+  --font-size-sm: 21px;
+  --font-size-lg: 27px;
+  --font-size-xl: 32px;
+  --font-size-2xl: 36px;
+  --font-size-3xl: 44px;
+}

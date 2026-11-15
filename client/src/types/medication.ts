@@ -10,10 +10,10 @@ export interface Medication {
   remainingQuantity: number;
   refillThreshold: number;
   isActive: boolean;
-  createdByName: string;
-  createdByRole: string;
-  createdAt: string;
-  updatedAt: string;
+  createdByName?: string;
+  createdByRole?: string;
+  createdAt?: string;
+  updatedAt?: string;
   hasPendingChange?: boolean;
   pendingChange?: {
     id: string;
@@ -21,6 +21,7 @@ export interface Medication {
     requestedByName: string;
     createdAt: string;
   } | null;
+  changeRequests?: MedicationChangeRequest[];
 }
 
 export interface MedicationChangeRequest {
@@ -48,31 +49,60 @@ export interface MedicationChangeRequest {
   createdAt: string;
 }
 
+export interface TodayDose {
+  id: string;
+  circleId: string;
+  medicationId: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  status: 'PENDING' | 'TAKEN' | 'SKIPPED' | 'SNOOZED' | 'MISSED';
+  snoozedUntil?: string | null;
+  takenAt?: string | null;
+  recordedByRole: string;
+  recordedByName: string;
+  notes?: string | null;
+  medication: {
+    id: string;
+    name: string;
+    dosage: string;
+    frequency: string;
+    instructions?: string | null;
+    purpose?: string | null;
+    remainingQuantity: number;
+    refillThreshold: number;
+  };
+}
+
+export interface TodayDosesResponse {
+  date: string;
+  summary: {
+    totalScheduled: number;
+    takenCount: number;
+    skippedCount: number;
+    snoozedCount: number;
+    pendingCount: number;
+    missedCount: number;
+    adherencePercentage: number;
+  };
+  doses: TodayDose[];
+}
+
+// Backward compatibility alias
+export type DailyScheduleResponse = TodayDosesResponse;
+
 export interface DailyDoseItem {
+  id?: string;
   medicationId: string;
   medicationName: string;
   dosage: string;
   instructions: string | null;
   scheduledDate: string;
   scheduledTime: string;
-  status: 'PENDING' | 'TAKEN' | 'SKIPPED' | 'MISSED';
+  status: 'PENDING' | 'TAKEN' | 'SKIPPED' | 'SNOOZED' | 'MISSED';
   logId?: string;
   takenAt?: string | null;
   recordedByName?: string;
   recordedByRole?: string;
   notes?: string | null;
   remainingQuantity: number;
-}
-
-export interface DailyScheduleResponse {
-  date: string;
-  summary: {
-    totalScheduled: number;
-    takenCount: number;
-    skippedCount: number;
-    missedCount: number;
-    pendingCount: number;
-    adherencePercentage: number;
-  };
-  schedule: DailyDoseItem[];
 }

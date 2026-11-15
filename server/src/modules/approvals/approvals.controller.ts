@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
+import { recordActivity } from '../../utils/activity.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { ReviewRequestInput } from './approvals.schema.js';
 
@@ -80,7 +81,6 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
       isActive?: boolean;
     };
 
-    // Execute approval and data change in transaction
     const result = await prisma.$transaction(async (tx) => {
       let targetMedicationId = request.medicationId;
 
@@ -135,17 +135,24 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
         },
       });
 
-      // Add notification for circle
       await tx.notificationLog.create({
         data: {
           circleId: member.circleId,
           type: 'PENDING_APPROVAL',
           title: 'Medication Change Approved',
-          message: `${member.displayName} (Elder) approved the ${request.changeType.toLowerCase()} change request for medication.`,
+          message: `${member.displayName} (Elder) approved the ${request.changeType.toLowerCase()} change request.`,
         },
       });
 
       return updatedRequest;
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'CHANGE_APPROVED',
+      description: `${member.displayName} approved ${request.changeType.toLowerCase()} for medication`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.json({
@@ -201,6 +208,14 @@ export async function rejectRequest(req: Request, res: Response, next: NextFunct
         title: 'Medication Change Rejected',
         message: `${member.displayName} (Elder) declined the ${request.changeType.toLowerCase()} change request.`,
       },
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'CHANGE_REJECTED',
+      description: `${member.displayName} declined ${request.changeType.toLowerCase()} change request`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.json({

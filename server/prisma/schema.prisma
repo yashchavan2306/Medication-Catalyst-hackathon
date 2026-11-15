@@ -12,22 +12,48 @@ model CareCircle {
   code                  String                   @unique
   name                  String
   elderName             String
-  elderPasscodeHash     String
-  caretakerPasscodeHash String
-  familyPasscodeHash    String
+  elderEmail            String?
+  elderPasscodeHash     String?
+  caretakerPasscodeHash String?
+  familyPasscodeHash    String?
+  failedLoginAttempts   Int                      @default(0)
+  lockedUntil           DateTime?
   emergencyContactName  String?
   emergencyContactPhone String?
   notes                 String?
   createdAt             DateTime                 @default(now())
   updatedAt             DateTime                 @updatedAt
 
-  members               CircleMember[]
+  members               Member[]
+  circleMembers         CircleMember[]
   medications           Medication[]
   changeRequests        MedicationChangeRequest[]
+  doseLogs              DoseLog[]
   adherenceLogs         AdherenceLog[]
   appointments          Appointment[]
   vitalLogs             VitalLog[]
   notifications         NotificationLog[]
+  auditLogs             AuditLog[]
+  activityLogs          ActivityLog[]
+}
+
+model Member {
+  id             String      @id @default(uuid())
+  circleId       String
+  circle         CareCircle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  role           String      // 'elder' | 'caretaker' | 'family'
+  displayName    String
+  passcodeHash   String
+  failedAttempts Int         @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  doseLogs       DoseLog[]
+  auditLogs      AuditLog[]
+
+  @@unique([circleId, role])
+  @@index([circleId])
 }
 
 model CircleMember {
@@ -49,20 +75,26 @@ model Medication {
   name              String
   dosage            String
   frequency         String
-  timesOfDay        String                   // JSON array of strings, e.g. ["08:00","20:00"]
-  instructions      String?
-  purpose           String?
+  status            String                   @default("ACTIVE") // 'ACTIVE' | 'PENDING_APPROVAL' | 'STOPPED'
+  pendingChange     String?                  // JSON string of proposed changes
+  pillCount         Int                      @default(30)
   remainingQuantity Int                      @default(30)
   refillThreshold   Int                      @default(5)
+  times             String?                  // JSON array of strings, e.g. ["08:00","20:00"]
+  timesOfDay        String                   @default("[]") // JSON array of strings
+  instructions      String?
+  purpose           String?
   isActive          Boolean                  @default(true)
   createdByName     String
   createdByRole     String
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 
+  doseLogs          DoseLog[]
   adherenceLogs     AdherenceLog[]
   changeRequests    MedicationChangeRequest[]
 
+  @@index([circleId, status])
   @@index([circleId, isActive])
 }
 
@@ -89,6 +121,29 @@ model MedicationChangeRequest {
   @@index([circleId, status])
 }
 
+model DoseLog {
+  id             String      @id @default(uuid())
+  circleId       String
+  circle         CareCircle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  medicationId   String
+  medication     Medication  @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  memberId       String?
+  member         Member?     @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  scheduledDate  String      // "YYYY-MM-DD"
+  scheduledTime  String      // "HH:mm"
+  status         String      // 'PENDING' | 'TAKEN' | 'MISSED' | 'SKIPPED'
+  snoozedUntil   DateTime?
+  takenAt        DateTime?
+  recordedByRole String?     // 'elder' | 'caretaker'
+  recordedByName String?
+  notes          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([medicationId, scheduledDate, scheduledTime])
+  @@index([circleId, scheduledDate])
+}
+
 model AdherenceLog {
   id             String      @id @default(uuid())
   circleId       String
@@ -97,10 +152,11 @@ model AdherenceLog {
   medication     Medication  @relation(fields: [medicationId], references: [id], onDelete: Cascade)
   scheduledDate  String      // "YYYY-MM-DD"
   scheduledTime  String      // "HH:mm"
-  status         String      // 'TAKEN' | 'SKIPPED' | 'MISSED'
+  status         String      // 'PENDING' | 'TAKEN' | 'SKIPPED' | 'SNOOZED' | 'MISSED'
+  snoozedUntil   DateTime?
   takenAt        DateTime?
-  recordedByRole String      // 'elder' | 'caretaker'
-  recordedByName String
+  recordedByRole String?     // 'elder' | 'caretaker'
+  recordedByName String?
   notes          String?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
@@ -118,6 +174,7 @@ model Appointment {
   location      String
   dateTime      DateTime
   notes         String?
+  questions     String?    // JSON questions array/object
   status        String     @default("UPCOMING") // 'UPCOMING' | 'COMPLETED' | 'CANCELLED'
   createdByRole String
   createdByName String
@@ -128,19 +185,19 @@ model Appointment {
 }
 
 model VitalLog {
-  id                    String     @id @default(uuid())
-  circleId              String
-  circle                CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
-  recordedAt            DateTime   @default(now())
-  bloodPressureSystolic Int?
+  id                     String     @id @default(uuid())
+  circleId               String
+  circle                 CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  recordedAt             DateTime   @default(now())
+  bloodPressureSystolic  Int?
   bloodPressureDiastolic Int?
-  bloodSugar            Float?
-  heartRate             Int?
-  mood                  String?    // 'GREAT' | 'GOOD' | 'OKAY' | 'TIRED' | 'UNWELL'
-  notes                 String?
-  recordedByRole        String
-  recordedByName        String
-  createdAt             DateTime   @default(now())
+  bloodSugar             Float?
+  heartRate              Int?
+  mood                   String?    // 'GREAT' | 'GOOD' | 'OKAY' | 'TIRED' | 'UNWELL'
+  notes                  String?
+  recordedByRole         String
+  recordedByName         String
+  createdAt              DateTime   @default(now())
 
   @@index([circleId, recordedAt])
 }
@@ -152,9 +209,40 @@ model NotificationLog {
   type      String     // 'MISSED_DOSE' | 'LOW_REFILL' | 'PENDING_APPROVAL' | 'APPOINTMENT'
   title     String
   message   String
+  dedupeKey String?    @unique
   isRead    Boolean    @default(false)
   emailSent Boolean    @default(false)
   createdAt DateTime   @default(now())
 
   @@index([circleId, isRead])
+}
+
+model AuditLog {
+  id          String     @id @default(uuid())
+  circleId    String
+  circle      CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  memberId    String?
+  member      Member?    @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  action      String     // e.g. 'CIRCLE_CREATED', 'MEDICATION_CREATED', 'DOSE_TAKEN', etc.
+  targetType  String?    // e.g. 'CareCircle', 'Medication', 'DoseLog', 'Appointment'
+  targetId    String?
+  details     String?    // JSON or human readable details
+  actorRole   String
+  actorName   String
+  createdAt   DateTime   @default(now())
+
+  @@index([circleId, createdAt])
+}
+
+model ActivityLog {
+  id          String     @id @default(uuid())
+  circleId    String
+  circle      CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  action      String
+  description String
+  actorRole   String
+  actorName   String
+  createdAt   DateTime   @default(now())
+
+  @@index([circleId, createdAt])
 }

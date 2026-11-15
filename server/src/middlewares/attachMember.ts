@@ -2,12 +2,23 @@ import type { Request, Response, NextFunction } from 'express';
 import { verifyMemberToken } from '../utils/jwt.js';
 
 /**
- * Middleware: Attaches member identity to req.member from the Bearer token.
+ * Middleware: Attaches member identity to req.member from HttpOnly cookie or Bearer token.
  * Rejects requests with 401 if token is missing or invalid.
  */
 export function attachMember(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token: string | undefined;
+
+  // 1. Check HttpOnly cookie
+  if (req.cookies && (req.cookies.token || req.cookies.carecircle_token)) {
+    token = req.cookies.token || req.cookies.carecircle_token;
+  }
+
+  // 2. Fall back to Authorization: Bearer header
+  if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.substring(7).trim();
+  }
+
+  if (!token) {
     res.status(401).json({
       error: {
         code: 'UNAUTHORIZED',
@@ -17,7 +28,6 @@ export function attachMember(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
-  const token = authHeader.substring(7).trim();
   try {
     const member = verifyMemberToken(token);
     req.member = member;

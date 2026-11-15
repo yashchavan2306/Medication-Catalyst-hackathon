@@ -34,7 +34,13 @@ medicationsRouter.post(
   createMedication
 );
 
-// Update medication (elder directly updates, caretaker creates approval request)
+// Update medication (supports PUT as requested and PATCH)
+medicationsRouter.put(
+  '/:id',
+  requireRole('elder', 'caretaker'),
+  validate({ params: medicationIdParamSchema, body: updateMedicationSchema }),
+  updateMedication
+);
 medicationsRouter.patch(
   '/:id',
   requireRole('elder', 'caretaker'),
@@ -42,7 +48,7 @@ medicationsRouter.patch(
   updateMedication
 );
 
-// Delete/deactivate medication (elder directly deactivates, caretaker creates approval request)
+// Delete/deactivate medication
 medicationsRouter.delete(
   '/:id',
   requireRole('elder', 'caretaker'),

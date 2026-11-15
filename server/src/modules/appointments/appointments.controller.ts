@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
+import { recordActivity } from '../../utils/activity.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { CreateAppointmentInput, UpdateAppointmentInput } from './appointments.schema.js';
 
@@ -56,7 +57,6 @@ export async function createAppointment(req: Request, res: Response, next: NextF
       },
     });
 
-    // Notify circle about new appointment
     await prisma.notificationLog.create({
       data: {
         circleId: member.circleId,
@@ -64,6 +64,14 @@ export async function createAppointment(req: Request, res: Response, next: NextF
         title: `New Appointment: ${input.title}`,
         message: `${input.title} with ${input.doctorName} on ${new Date(input.dateTime).toLocaleDateString()}. Added by ${member.displayName}.`,
       },
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'APPOINTMENT_CREATED',
+      description: `${member.displayName} scheduled "${input.title}" with ${input.doctorName}`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.status(201).json(appointment);
@@ -105,6 +113,14 @@ export async function updateAppointment(req: Request, res: Response, next: NextF
       },
     });
 
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'APPOINTMENT_UPDATED',
+      description: `${member.displayName} updated appointment "${existing.title}"`,
+      actorRole: member.role,
+      actorName: member.displayName,
+    });
+
     res.json(updated);
   } catch (err) {
     next(err);
@@ -133,6 +149,14 @@ export async function deleteAppointment(req: Request, res: Response, next: NextF
 
     await prisma.appointment.delete({
       where: { id: existing.id },
+    });
+
+    await recordActivity({
+      circleId: member.circleId,
+      action: 'APPOINTMENT_DELETED',
+      description: `${member.displayName} deleted appointment "${existing.title}"`,
+      actorRole: member.role,
+      actorName: member.displayName,
     });
 
     res.json({ message: 'Appointment deleted successfully' });

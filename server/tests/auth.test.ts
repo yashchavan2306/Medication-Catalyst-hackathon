@@ -6,18 +6,6 @@ import { prisma } from '../src/config/db.js';
 const app = createApp();
 
 describe('Auth & Circle Lifecycle API', () => {
-  beforeAll(async () => {
-    // Clean up test data
-    await prisma.notificationLog.deleteMany();
-    await prisma.vitalLog.deleteMany();
-    await prisma.adherenceLog.deleteMany();
-    await prisma.medicationChangeRequest.deleteMany();
-    await prisma.medication.deleteMany();
-    await prisma.appointment.deleteMany();
-    await prisma.circleMember.deleteMany();
-    await prisma.careCircle.deleteMany();
-  });
-
   let circleCode = '';
   let elderToken = '';
   let caretakerToken = '';

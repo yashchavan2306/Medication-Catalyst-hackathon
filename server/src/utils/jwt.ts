@@ -18,6 +18,7 @@ export function verifyMemberToken(token: string): AuthMember {
   const decoded = jwt.verify(token, env.JWT_SECRET) as AuthMember;
   return {
     circleId: decoded.circleId,
+    memberId: decoded.memberId,
     role: decoded.role,
     displayName: decoded.displayName,
   };

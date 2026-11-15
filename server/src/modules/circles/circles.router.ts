@@ -2,8 +2,13 @@ import { Router } from 'express';
 import { attachMember } from '../../middlewares/attachMember.js';
 import { requireRole } from '../../middlewares/requireRole.js';
 import { validate } from '../../middlewares/validate.js';
-import { updateCircleSchema, updatePasscodesSchema } from './circles.schema.js';
 import {
+  createCircleRequestSchema,
+  updateCircleSchema,
+  updatePasscodesSchema,
+} from './circles.schema.js';
+import {
+  createCircle,
   getCircleDetails,
   updateCircle,
   updateCirclePasscodes,
@@ -11,14 +16,20 @@ import {
 
 export const circlesRouter = Router();
 
-circlesRouter.use(attachMember);
+// Public: Create a Care Circle
+// POST /api/circles {elderName, elderEmail} -> {circleCode, passcodes:{elder,caretaker,family}}
+circlesRouter.post(
+  '/',
+  validate({ body: createCircleRequestSchema }),
+  createCircle
+);
 
-// Available to all circle members (elder, caretaker, family)
-circlesRouter.get('/', getCircleDetails);
+// Protected routes below
+circlesRouter.get('/', attachMember, getCircleDetails);
 
-// Elder only actions
 circlesRouter.patch(
   '/',
+  attachMember,
   requireRole('elder'),
   validate({ body: updateCircleSchema }),
   updateCircle
@@ -26,6 +37,7 @@ circlesRouter.patch(
 
 circlesRouter.post(
   '/passcodes',
+  attachMember,
   requireRole('elder'),
   validate({ body: updatePasscodesSchema }),
   updateCirclePasscodes

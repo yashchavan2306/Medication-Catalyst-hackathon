@@ -24,14 +24,15 @@ body {
 /* Skip to Content for Screen Readers and Keyboard users */
 .skip-link {
   position: absolute;
-  top: -60px;
+  top: -80px;
   left: 16px;
   background: var(--color-primary);
   color: #ffffff;
   padding: 12px 20px;
   z-index: 9999;
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: var(--font-size-base);
   border-radius: var(--radius-sm);
   transition: top 0.2s ease;
 }
@@ -40,7 +41,7 @@ body {
   top: 16px;
 }
 
-/* Buttons: Minimum 44x44px touch targets */
+/* Buttons: Minimum 44x44px touch targets per WCAG 2.5.5 / 2.5.8 */
 button, .btn {
   font-family: inherit;
   font-size: var(--font-size-base);
@@ -222,4 +223,28 @@ input:focus, select:focus, textarea:focus {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+/* Print Styles */
+@media print {
+  body {
+    background-color: #ffffff;
+    color: #000000;
+  }
+
+  .no-print, header, nav, footer, .skip-link, button:not(.printable-action) {
+    display: none !important;
+  }
+
+  .container {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .card {
+    border: 2px solid #000000 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
 }
