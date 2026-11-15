@@ -1,0 +1,160 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model CareCircle {
+  id                    String                   @id @default(uuid())
+  code                  String                   @unique
+  name                  String
+  elderName             String
+  elderPasscodeHash     String
+  caretakerPasscodeHash String
+  familyPasscodeHash    String
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  notes                 String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  members               CircleMember[]
+  medications           Medication[]
+  changeRequests        MedicationChangeRequest[]
+  adherenceLogs         AdherenceLog[]
+  appointments          Appointment[]
+  vitalLogs             VitalLog[]
+  notifications         NotificationLog[]
+}
+
+model CircleMember {
+  id          String     @id @default(uuid())
+  circleId    String
+  circle      CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  role        String     // 'elder' | 'caretaker' | 'family'
+  displayName String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([circleId])
+}
+
+model Medication {
+  id                String                   @id @default(uuid())
+  circleId          String
+  circle            CareCircle               @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  name              String
+  dosage            String
+  frequency         String
+  timesOfDay        String                   // JSON array of strings, e.g. ["08:00","20:00"]
+  instructions      String?
+  purpose           String?
+  remainingQuantity Int                      @default(30)
+  refillThreshold   Int                      @default(5)
+  isActive          Boolean                  @default(true)
+  createdByName     String
+  createdByRole     String
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  adherenceLogs     AdherenceLog[]
+  changeRequests    MedicationChangeRequest[]
+
+  @@index([circleId, isActive])
+}
+
+model MedicationChangeRequest {
+  id              String      @id @default(uuid())
+  circleId        String
+  circle          CareCircle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  medicationId    String?
+  medication      Medication? @relation(fields: [medicationId], references: [id], onDelete: SetNull)
+  changeType      String      // 'CREATE' | 'UPDATE' | 'DELETE'
+  status          String      @default("PENDING") // 'PENDING' | 'APPROVED' | 'REJECTED'
+  proposedData    String      // JSON object of proposed fields
+  currentData     String?     // JSON object snapshot before update/delete
+  requestedByRole String      // 'caretaker'
+  requestedByName String
+  reason          String?
+  reviewedByRole  String?     // 'elder'
+  reviewedByName  String?
+  reviewNotes     String?
+  reviewedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([circleId, status])
+}
+
+model AdherenceLog {
+  id             String      @id @default(uuid())
+  circleId       String
+  circle         CareCircle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  medicationId   String
+  medication     Medication  @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  scheduledDate  String      // "YYYY-MM-DD"
+  scheduledTime  String      // "HH:mm"
+  status         String      // 'TAKEN' | 'SKIPPED' | 'MISSED'
+  takenAt        DateTime?
+  recordedByRole String      // 'elder' | 'caretaker'
+  recordedByName String
+  notes          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([medicationId, scheduledDate, scheduledTime])
+  @@index([circleId, scheduledDate])
+}
+
+model Appointment {
+  id            String     @id @default(uuid())
+  circleId      String
+  circle        CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  title         String
+  doctorName    String
+  location      String
+  dateTime      DateTime
+  notes         String?
+  status        String     @default("UPCOMING") // 'UPCOMING' | 'COMPLETED' | 'CANCELLED'
+  createdByRole String
+  createdByName String
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([circleId, dateTime])
+}
+
+model VitalLog {
+  id                    String     @id @default(uuid())
+  circleId              String
+  circle                CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  recordedAt            DateTime   @default(now())
+  bloodPressureSystolic Int?
+  bloodPressureDiastolic Int?
+  bloodSugar            Float?
+  heartRate             Int?
+  mood                  String?    // 'GREAT' | 'GOOD' | 'OKAY' | 'TIRED' | 'UNWELL'
+  notes                 String?
+  recordedByRole        String
+  recordedByName        String
+  createdAt             DateTime   @default(now())
+
+  @@index([circleId, recordedAt])
+}
+
+model NotificationLog {
+  id        String     @id @default(uuid())
+  circleId  String
+  circle    CareCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  type      String     // 'MISSED_DOSE' | 'LOW_REFILL' | 'PENDING_APPROVAL' | 'APPOINTMENT'
+  title     String
+  message   String
+  isRead    Boolean    @default(false)
+  emailSent Boolean    @default(false)
+  createdAt DateTime   @default(now())
+
+  @@index([circleId, isRead])
+}

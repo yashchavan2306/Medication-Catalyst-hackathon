@@ -1,0 +1,54 @@
+:root {
+  /* Accessibility: 18px base font size for elderly accessibility */
+  --font-size-base: 18px;
+  --font-size-sm: 16px;
+  --font-size-lg: 20px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 28px;
+  --font-size-3xl: 34px;
+
+  /* Touch Targets: minimum 44px per WCAG AA 2.5.5 / 2.5.8 */
+  --touch-target: 44px;
+
+  /* High-contrast palette compliant with WCAG AA/AAA */
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #cbd5e1;
+  --color-border-strong: #64748b;
+
+  --color-text-main: #0f172a;
+  --color-text-muted: #334155;
+  --color-text-light: #475569;
+
+  --color-primary: #0369a1;
+  --color-primary-hover: #075985;
+  --color-primary-active: #0c4a6e;
+  --color-primary-surface: #e0f2fe;
+
+  --color-success: #166534;
+  --color-success-bg: #dcfce7;
+  --color-success-border: #22c55e;
+
+  --color-warning: #9a3412;
+  --color-warning-bg: #ffedd5;
+  --color-warning-border: #f97316;
+
+  --color-danger: #991b1b;
+  --color-danger-bg: #fee2e2;
+  --color-danger-border: #ef4444;
+
+  --color-neutral-badge: #e2e8f0;
+  --color-neutral-text: #1e293b;
+
+  /* Focus ring */
+  --focus-outline: 3px solid #0284c7;
+  --focus-offset: 3px;
+
+  /* Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
