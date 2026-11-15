@@ -111,6 +111,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post('/api/medications')
       .set('Cookie', [elderCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({
         name: 'Atorvastatin',
         dosage: '20mg',
@@ -131,6 +132,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post('/api/medications')
       .set('Cookie', [caretakerCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({
         name: 'Omeprazole',
         dosage: '20mg',
@@ -163,6 +165,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .put(`/api/medications/${createdMedicationId}`)
       .set('Cookie', [elderCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({
         dosage: '40mg',
       });
@@ -188,6 +191,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post(`/api/approvals/${caretakerChangeRequestId}/approve`)
       .set('Cookie', [elderCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({ reviewNotes: 'Approved after checking medical chart' });
 
     expect(res.status).toBe(200);
@@ -217,7 +221,8 @@ describe('Exact API Specification Contract Test', () => {
   it('POST /api/doses/:id/take records dose as taken and decrements inventory', async () => {
     const res = await request(app)
       .post(`/api/doses/${firstDoseId}/take`)
-      .set('Cookie', [caretakerCookie]);
+      .set('Cookie', [caretakerCookie])
+      .set('X-Requested-With', 'XMLHttpRequest');
 
     expect(res.status).toBe(200);
     expect(res.body.dose.status).toBe('TAKEN');
@@ -227,6 +232,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post(`/api/doses/${firstDoseId}/snooze`)
       .set('Cookie', [elderCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({ minutes: 45 });
 
     expect(res.status).toBe(200);
@@ -238,6 +244,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post(`/api/doses/${firstDoseId}/skip`)
       .set('Cookie', [caretakerCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({ reason: 'Patient feeling nauseous' });
 
     expect(res.status).toBe(200);
@@ -250,6 +257,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .post('/api/appointments')
       .set('Cookie', [caretakerCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({
         title: 'Geriatric Specialist Review',
         doctorName: 'Dr. John Watson',
@@ -276,6 +284,7 @@ describe('Exact API Specification Contract Test', () => {
     const res = await request(app)
       .put(`/api/appointments/${createdAppointmentId}`)
       .set('Cookie', [elderCookie])
+      .set('X-Requested-With', 'XMLHttpRequest')
       .send({
         doctorName: 'Dr. John H. Watson',
       });
@@ -336,7 +345,9 @@ describe('Exact API Specification Contract Test', () => {
 
   // 3. POST /api/auth/logout
   it('POST /api/auth/logout clears auth cookie and logs out', async () => {
-    const res = await request(app).post('/api/auth/logout');
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('X-Requested-With', 'XMLHttpRequest');
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Logged out successfully');
 

@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
 import { recordActivity } from '../../utils/activity.js';
+import { sendNotificationWithDedupe } from '../../services/emailService.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { ReviewRequestInput } from './approvals.schema.js';
 
@@ -25,7 +26,7 @@ export async function getApprovals(req: Request, res: Response, next: NextFuncti
       where: whereClause,
       include: {
         medication: {
-          select: { id: true, name: true, dosage: true, frequency: true, isActive: true },
+          select: { id: true, name: true, dosage: true, frequency: true, isActive: true, status: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -74,9 +75,11 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
       dosage?: string;
       frequency?: string;
       timesOfDay?: string[];
+      times?: string[];
       instructions?: string;
       purpose?: string;
       remainingQuantity?: number;
+      pillCount?: number;
       refillThreshold?: number;
       isActive?: boolean;
     };
@@ -84,42 +87,80 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
     const result = await prisma.$transaction(async (tx) => {
       let targetMedicationId = request.medicationId;
 
+      const timesArr = proposed.timesOfDay || proposed.times || ['08:00'];
+      const timesJson = JSON.stringify(timesArr);
+      const qty = proposed.pillCount ?? proposed.remainingQuantity ?? 30;
+      const threshold = proposed.refillThreshold ?? 5;
+
       if (request.changeType === 'CREATE') {
-        const createdMed = await tx.medication.create({
-          data: {
-            circleId: member.circleId,
-            name: proposed.name!,
-            dosage: proposed.dosage!,
-            frequency: proposed.frequency!,
-            timesOfDay: JSON.stringify(proposed.timesOfDay || ['08:00']),
-            instructions: proposed.instructions,
-            purpose: proposed.purpose,
-            remainingQuantity: proposed.remainingQuantity ?? 30,
-            refillThreshold: proposed.refillThreshold ?? 5,
-            isActive: true,
-            createdByRole: request.requestedByRole,
-            createdByName: request.requestedByName,
-          },
-        });
-        targetMedicationId = createdMed.id;
+        if (request.medicationId) {
+          // If medication was already created as PENDING_APPROVAL
+          const updatedMed = await tx.medication.update({
+            where: { id: request.medicationId },
+            data: {
+              status: 'ACTIVE',
+              isActive: true,
+              pendingChange: null,
+              name: proposed.name,
+              dosage: proposed.dosage,
+              frequency: proposed.frequency,
+              timesOfDay: timesJson,
+              times: timesJson,
+              instructions: proposed.instructions,
+              purpose: proposed.purpose,
+              remainingQuantity: qty,
+              pillCount: qty,
+              refillThreshold: threshold,
+            },
+          });
+          targetMedicationId = updatedMed.id;
+        } else {
+          const createdMed = await tx.medication.create({
+            data: {
+              circleId: member.circleId,
+              name: proposed.name!,
+              dosage: proposed.dosage!,
+              frequency: proposed.frequency!,
+              status: 'ACTIVE',
+              timesOfDay: timesJson,
+              times: timesJson,
+              instructions: proposed.instructions,
+              purpose: proposed.purpose,
+              remainingQuantity: qty,
+              pillCount: qty,
+              refillThreshold: threshold,
+              isActive: true,
+              createdByRole: request.requestedByRole,
+              createdByName: request.requestedByName,
+            },
+          });
+          targetMedicationId = createdMed.id;
+        }
       } else if (request.changeType === 'UPDATE' && request.medicationId) {
         await tx.medication.update({
           where: { id: request.medicationId },
           data: {
+            status: 'ACTIVE',
+            isActive: true,
+            pendingChange: null,
             ...(proposed.name ? { name: proposed.name } : {}),
             ...(proposed.dosage ? { dosage: proposed.dosage } : {}),
             ...(proposed.frequency ? { frequency: proposed.frequency } : {}),
-            ...(proposed.timesOfDay ? { timesOfDay: JSON.stringify(proposed.timesOfDay) } : {}),
+            ...(proposed.timesOfDay || proposed.times
+              ? { timesOfDay: timesJson, times: timesJson }
+              : {}),
             ...(proposed.instructions !== undefined ? { instructions: proposed.instructions } : {}),
             ...(proposed.purpose !== undefined ? { purpose: proposed.purpose } : {}),
-            ...(proposed.remainingQuantity !== undefined ? { remainingQuantity: proposed.remainingQuantity } : {}),
+            ...(proposed.remainingQuantity !== undefined || proposed.pillCount !== undefined
+              ? { remainingQuantity: qty, pillCount: qty }
+              : {}),
             ...(proposed.refillThreshold !== undefined ? { refillThreshold: proposed.refillThreshold } : {}),
           },
         });
       } else if (request.changeType === 'DELETE' && request.medicationId) {
         await tx.medication.update({
           where: { id: request.medicationId },
-          data: { isActive: false },
+          data: { isActive: false, status: 'STOPPED', pendingChange: null },
         });
       }
 
@@ -135,16 +176,15 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
         },
       });
 
-      await tx.notificationLog.create({
-        data: {
-          circleId: member.circleId,
-          type: 'PENDING_APPROVAL',
-          title: 'Medication Change Approved',
-          message: `${member.displayName} (Elder) approved the ${request.changeType.toLowerCase()} change request.`,
-        },
-      });
-
       return updatedRequest;
+    });
+
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'PENDING_APPROVAL',
+      title: 'Medication Change Approved',
+      message: `${member.displayName} (Elder) approved the ${request.changeType.toLowerCase()} change request.`,
+      dedupeKey: `approval-action:${request.id}:approved`,
     });
 
     await recordActivity({
@@ -153,6 +193,8 @@ export async function approveRequest(req: Request, res: Response, next: NextFunc
       description: `${member.displayName} approved ${request.changeType.toLowerCase()} for medication`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'MedicationChangeRequest',
+      targetId: result.id,
     });
 
     res.json({
@@ -190,24 +232,38 @@ export async function rejectRequest(req: Request, res: Response, next: NextFunct
       throw new AppError(`Request already ${request.status.toLowerCase()}`, 400, 'ALREADY_RESOLVED');
     }
 
-    const updated = await prisma.medicationChangeRequest.update({
-      where: { id: request.id },
-      data: {
-        status: 'REJECTED',
-        reviewedByRole: member.role,
-        reviewedByName: member.displayName,
-        reviewNotes: reviewNotes || 'Declined by elder',
-        reviewedAt: new Date(),
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      // If was create, mark as STOPPED or delete
+      if (request.changeType === 'CREATE' && request.medicationId) {
+        await tx.medication.update({
+          where: { id: request.medicationId },
+          data: { status: 'STOPPED', isActive: false, pendingChange: null },
+        });
+      } else if (request.changeType === 'UPDATE' && request.medicationId) {
+        await tx.medication.update({
+          where: { id: request.medicationId },
+          data: { pendingChange: null },
+        });
+      }
+
+      return tx.medicationChangeRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'REJECTED',
+          reviewedByRole: member.role,
+          reviewedByName: member.displayName,
+          reviewNotes: reviewNotes || 'Declined by elder',
+          reviewedAt: new Date(),
+        },
+      });
     });
 
-    await prisma.notificationLog.create({
-      data: {
-        circleId: member.circleId,
-        type: 'PENDING_APPROVAL',
-        title: 'Medication Change Rejected',
-        message: `${member.displayName} (Elder) declined the ${request.changeType.toLowerCase()} change request.`,
-      },
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'PENDING_APPROVAL',
+      title: 'Medication Change Rejected',
+      message: `${member.displayName} (Elder) declined the ${request.changeType.toLowerCase()} change request.`,
+      dedupeKey: `approval-action:${request.id}:rejected`,
     });
 
     await recordActivity({
@@ -216,6 +272,8 @@ export async function rejectRequest(req: Request, res: Response, next: NextFunct
       description: `${member.displayName} declined ${request.changeType.toLowerCase()} change request`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'MedicationChangeRequest',
+      targetId: updated.id,
     });
 
     res.json({

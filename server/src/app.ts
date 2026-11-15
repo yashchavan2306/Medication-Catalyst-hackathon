@@ -1,8 +1,11 @@
 import express, { type Application, type Request, type Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import { attachMember } from './middlewares/attachMember.js';
+import { csrfProtection } from './middlewares/csrfProtection.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { authRouter } from './modules/auth/auth.router.js';
 import { getMe } from './modules/auth/auth.controller.js';
@@ -23,6 +26,10 @@ import { getActivity } from './modules/activity/activity.controller.js';
 export function createApp(): Application {
   const app = express();
 
+  // Security headers via helmet
+  app.use(helmet());
+
+  // CORS configured to client origin with credentials allowed
   app.use(
     cors({
       origin: [env.CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
@@ -32,6 +39,24 @@ export function createApp(): Application {
 
   app.use(express.json());
   app.use(cookieParser());
+
+  // CSRF protection via required X-Requested-With header
+  app.use(csrfProtection);
+
+  // Rate limiter for authentication endpoints
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: process.env.NODE_ENV === 'test' ? 1000 : 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: {
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Too many requests from this IP, please try again later.',
+      },
+    },
+  });
+  app.use('/api/auth/login', loginLimiter);
 
   // Health check endpoints
   app.get('/health', (_req: Request, res: Response) => {

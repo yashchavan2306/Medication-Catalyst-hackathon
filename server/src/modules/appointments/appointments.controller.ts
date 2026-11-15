@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
 import { recordActivity } from '../../utils/activity.js';
+import { sendNotificationWithDedupe } from '../../services/emailService.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { CreateAppointmentInput, UpdateAppointmentInput } from './appointments.schema.js';
 
@@ -26,7 +27,12 @@ export async function getAppointments(req: Request, res: Response, next: NextFun
       orderBy: { dateTime: 'asc' },
     });
 
-    res.json(appointments);
+    const parsed = appointments.map((appt) => ({
+      ...appt,
+      questions: appt.questions ? JSON.parse(appt.questions) : null,
+    }));
+
+    res.json(parsed);
   } catch (err) {
     next(err);
   }
@@ -43,6 +49,11 @@ export async function createAppointment(req: Request, res: Response, next: NextF
     }
 
     const input: CreateAppointmentInput = req.body;
+    const questionsJson = input.questions
+      ? typeof input.questions === 'string'
+        ? input.questions
+        : JSON.stringify(input.questions)
+      : null;
 
     const appointment = await prisma.appointment.create({
       data: {
@@ -52,18 +63,18 @@ export async function createAppointment(req: Request, res: Response, next: NextF
         location: input.location,
         dateTime: new Date(input.dateTime),
         notes: input.notes,
+        questions: questionsJson,
         createdByRole: member.role,
         createdByName: member.displayName,
       },
     });
 
-    await prisma.notificationLog.create({
-      data: {
-        circleId: member.circleId,
-        type: 'APPOINTMENT',
-        title: `New Appointment: ${input.title}`,
-        message: `${input.title} with ${input.doctorName} on ${new Date(input.dateTime).toLocaleDateString()}. Added by ${member.displayName}.`,
-      },
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'APPOINTMENT',
+      title: `New Appointment: ${input.title}`,
+      message: `${input.title} with ${input.doctorName} on ${new Date(input.dateTime).toLocaleDateString()}. Added by ${member.displayName}.`,
+      dedupeKey: `appt-created:${appointment.id}`,
     });
 
     await recordActivity({
@@ -72,9 +83,14 @@ export async function createAppointment(req: Request, res: Response, next: NextF
       description: `${member.displayName} scheduled "${input.title}" with ${input.doctorName}`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'Appointment',
+      targetId: appointment.id,
     });
 
-    res.status(201).json(appointment);
+    res.status(201).json({
+      ...appointment,
+      questions: appointment.questions ? JSON.parse(appointment.questions) : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -101,6 +117,12 @@ export async function updateAppointment(req: Request, res: Response, next: NextF
       throw new AppError('Appointment not found', 404, 'NOT_FOUND');
     }
 
+    const questionsJson = input.questions !== undefined
+      ? typeof input.questions === 'string'
+        ? input.questions
+        : JSON.stringify(input.questions)
+      : existing.questions;
+
     const updated = await prisma.appointment.update({
       where: { id: existing.id },
       data: {
@@ -109,6 +131,7 @@ export async function updateAppointment(req: Request, res: Response, next: NextF
         ...(input.location ? { location: input.location } : {}),
         ...(input.dateTime ? { dateTime: new Date(input.dateTime) } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.questions !== undefined ? { questions: questionsJson } : {}),
         ...(input.status ? { status: input.status } : {}),
       },
     });
@@ -119,9 +142,14 @@ export async function updateAppointment(req: Request, res: Response, next: NextF
       description: `${member.displayName} updated appointment "${existing.title}"`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'Appointment',
+      targetId: updated.id,
     });
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      questions: updated.questions ? JSON.parse(updated.questions) : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -157,6 +185,8 @@ export async function deleteAppointment(req: Request, res: Response, next: NextF
       description: `${member.displayName} deleted appointment "${existing.title}"`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'Appointment',
+      targetId: existing.id,
     });
 
     res.json({ message: 'Appointment deleted successfully' });

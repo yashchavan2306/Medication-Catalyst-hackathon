@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/db.js';
 import { recordActivity } from '../../utils/activity.js';
+import { sendNotificationWithDedupe } from '../../services/emailService.js';
 import { AppError } from '../../middlewares/errorHandler.js';
 import type { CreateMedicationInput, UpdateMedicationInput } from './medications.schema.js';
 
@@ -20,7 +21,7 @@ export async function getMedications(req: Request, res: Response, next: NextFunc
     const medications = await prisma.medication.findMany({
       where: {
         circleId: member.circleId,
-        ...(includeInactive ? {} : { isActive: true }),
+        ...(includeInactive ? {} : { isActive: true, status: 'ACTIVE' }),
       },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -33,9 +34,10 @@ export async function getMedications(req: Request, res: Response, next: NextFunc
 
     const parsedMedications = medications.map((med) => ({
       ...med,
-      timesOfDay: JSON.parse(med.timesOfDay) as string[],
-      hasPendingChange: med.changeRequests.length > 0,
-      pendingChange: med.changeRequests[0] || null,
+      timesOfDay: JSON.parse(med.timesOfDay || med.times || '[]') as string[],
+      times: JSON.parse(med.times || med.timesOfDay || '[]') as string[],
+      hasPendingChange: med.changeRequests.length > 0 || Boolean(med.pendingChange),
+      pendingChange: med.changeRequests[0] || (med.pendingChange ? JSON.parse(med.pendingChange) : null),
     }));
 
     res.json(parsedMedications);
@@ -74,7 +76,8 @@ export async function getMedicationById(req: Request, res: Response, next: NextF
 
     res.json({
       ...medication,
-      timesOfDay: JSON.parse(medication.timesOfDay) as string[],
+      timesOfDay: JSON.parse(medication.timesOfDay || medication.times || '[]') as string[],
+      times: JSON.parse(medication.times || medication.timesOfDay || '[]') as string[],
     });
   } catch (err) {
     next(err);
@@ -83,8 +86,8 @@ export async function getMedicationById(req: Request, res: Response, next: NextF
 
 /**
  * Controller: Create medication.
- * - Elder: direct creation with immediate effect.
- * - Caretaker: creates a pending change request for elder approval.
+ * - Elder: direct creation with immediate effect (status: ACTIVE).
+ * - Caretaker: creates a pending change request for elder approval (status: PENDING_APPROVAL).
  */
 export async function createMedication(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -95,6 +98,8 @@ export async function createMedication(req: Request, res: Response, next: NextFu
 
     const input: CreateMedicationInput = req.body;
     const timesOfDayJson = JSON.stringify(input.timesOfDay);
+    const quantity = input.remainingQuantity ?? 30;
+    const threshold = input.refillThreshold ?? 5;
 
     if (member.role === 'elder') {
       const medication = await prisma.medication.create({
@@ -103,11 +108,14 @@ export async function createMedication(req: Request, res: Response, next: NextFu
           name: input.name,
           dosage: input.dosage,
           frequency: input.frequency,
+          status: 'ACTIVE',
+          times: timesOfDayJson,
           timesOfDay: timesOfDayJson,
           instructions: input.instructions,
           purpose: input.purpose,
-          remainingQuantity: input.remainingQuantity,
-          refillThreshold: input.refillThreshold,
+          pillCount: quantity,
+          remainingQuantity: quantity,
+          refillThreshold: threshold,
           isActive: true,
           createdByRole: member.role,
           createdByName: member.displayName,
@@ -120,6 +128,8 @@ export async function createMedication(req: Request, res: Response, next: NextFu
         description: `${member.displayName} added medication "${input.name}" (${input.dosage})`,
         actorRole: member.role,
         actorName: member.displayName,
+        targetType: 'Medication',
+        targetId: medication.id,
       });
 
       res.status(201).json({
@@ -128,6 +138,7 @@ export async function createMedication(req: Request, res: Response, next: NextFu
         medication: {
           ...medication,
           timesOfDay: input.timesOfDay,
+          times: input.timesOfDay,
         },
       });
       return;
@@ -139,15 +150,39 @@ export async function createMedication(req: Request, res: Response, next: NextFu
       dosage: input.dosage,
       frequency: input.frequency,
       timesOfDay: input.timesOfDay,
+      times: input.timesOfDay,
       instructions: input.instructions,
       purpose: input.purpose,
-      remainingQuantity: input.remainingQuantity,
-      refillThreshold: input.refillThreshold,
+      pillCount: quantity,
+      remainingQuantity: quantity,
+      refillThreshold: threshold,
+    });
+
+    const pendingMed = await prisma.medication.create({
+      data: {
+        circleId: member.circleId,
+        name: input.name,
+        dosage: input.dosage,
+        frequency: input.frequency,
+        status: 'PENDING_APPROVAL',
+        times: timesOfDayJson,
+        timesOfDay: timesOfDayJson,
+        instructions: input.instructions,
+        purpose: input.purpose,
+        pillCount: quantity,
+        remainingQuantity: quantity,
+        refillThreshold: threshold,
+        isActive: false,
+        pendingChange: proposedData,
+        createdByRole: member.role,
+        createdByName: member.displayName,
+      },
     });
 
     const changeRequest = await prisma.medicationChangeRequest.create({
       data: {
         circleId: member.circleId,
+        medicationId: pendingMed.id,
         changeType: 'CREATE',
         status: 'PENDING',
         proposedData,
@@ -157,27 +192,29 @@ export async function createMedication(req: Request, res: Response, next: NextFu
       },
     });
 
-    await prisma.notificationLog.create({
-      data: {
-        circleId: member.circleId,
-        type: 'PENDING_APPROVAL',
-        title: 'New Medication Awaiting Approval',
-        message: `${member.displayName} requested to add medication "${input.name}". Elder approval required.`,
-      },
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'PENDING_APPROVAL',
+      title: 'New Medication Awaiting Approval',
+      message: `${member.displayName} suggested adding "${input.name}" (${input.dosage}). Elder approval required.`,
+      dedupeKey: `pending-approval-create:${changeRequest.id}`,
     });
 
     await recordActivity({
       circleId: member.circleId,
       action: 'MEDICATION_CHANGE_REQUESTED',
-      description: `${member.displayName} requested approval to add "${input.name}"`,
+      description: `${member.displayName} proposed new medication "${input.name}"`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'MedicationChangeRequest',
+      targetId: changeRequest.id,
     });
 
     res.status(202).json({
       status: 'PENDING_APPROVAL',
-      message: 'Medication change submitted for elder approval',
+      message: 'Medication proposed and awaiting Elder approval',
       changeRequest,
+      medication: pendingMed,
     });
   } catch (err) {
     next(err);
@@ -186,8 +223,8 @@ export async function createMedication(req: Request, res: Response, next: NextFu
 
 /**
  * Controller: Update medication.
- * - Elder: direct update.
- * - Caretaker: creates a pending change request for elder approval.
+ * - Elder: direct update with immediate effect.
+ * - Caretaker: creates a pending UPDATE change request for elder approval.
  */
 export async function updateMedication(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -212,17 +249,20 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
         ? JSON.stringify(input.timesOfDay)
         : existing.timesOfDay;
 
+      const qty = input.remainingQuantity !== undefined ? input.remainingQuantity : existing.remainingQuantity;
+
       const updated = await prisma.medication.update({
         where: { id: existing.id },
         data: {
           ...(input.name ? { name: input.name } : {}),
           ...(input.dosage ? { dosage: input.dosage } : {}),
           ...(input.frequency ? { frequency: input.frequency } : {}),
-          ...(input.timesOfDay ? { timesOfDay: timesOfDayJson } : {}),
+          ...(input.timesOfDay ? { timesOfDay: timesOfDayJson, times: timesOfDayJson } : {}),
           ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
           ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
-          ...(input.remainingQuantity !== undefined ? { remainingQuantity: input.remainingQuantity } : {}),
+          ...(input.remainingQuantity !== undefined ? { remainingQuantity: qty, pillCount: qty } : {}),
           ...(input.refillThreshold !== undefined ? { refillThreshold: input.refillThreshold } : {}),
+          pendingChange: null,
         },
       });
 
@@ -232,6 +272,8 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
         description: `${member.displayName} updated medication "${existing.name}"`,
         actorRole: member.role,
         actorName: member.displayName,
+        targetType: 'Medication',
+        targetId: updated.id,
       });
 
       res.json({
@@ -239,7 +281,8 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
         message: 'Medication updated successfully',
         medication: {
           ...updated,
-          timesOfDay: JSON.parse(updated.timesOfDay) as string[],
+          timesOfDay: JSON.parse(updated.timesOfDay || updated.times || '[]') as string[],
+          times: JSON.parse(updated.times || updated.timesOfDay || '[]') as string[],
         },
       });
       return;
@@ -250,7 +293,7 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
       name: existing.name,
       dosage: existing.dosage,
       frequency: existing.frequency,
-      timesOfDay: JSON.parse(existing.timesOfDay),
+      timesOfDay: JSON.parse(existing.timesOfDay || existing.times || '[]'),
       instructions: existing.instructions,
       purpose: existing.purpose,
       remainingQuantity: existing.remainingQuantity,
@@ -261,11 +304,17 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
       name: input.name ?? existing.name,
       dosage: input.dosage ?? existing.dosage,
       frequency: input.frequency ?? existing.frequency,
-      timesOfDay: input.timesOfDay ?? JSON.parse(existing.timesOfDay),
+      timesOfDay: input.timesOfDay ?? JSON.parse(existing.timesOfDay || existing.times || '[]'),
       instructions: input.instructions !== undefined ? input.instructions : existing.instructions,
       purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
       remainingQuantity: input.remainingQuantity !== undefined ? input.remainingQuantity : existing.remainingQuantity,
+      pillCount: input.remainingQuantity !== undefined ? input.remainingQuantity : existing.pillCount,
       refillThreshold: input.refillThreshold !== undefined ? input.refillThreshold : existing.refillThreshold,
+    });
+
+    await prisma.medication.update({
+      where: { id: existing.id },
+      data: { pendingChange: proposedData },
     });
 
     const changeRequest = await prisma.medicationChangeRequest.create({
@@ -282,13 +331,12 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
       },
     });
 
-    await prisma.notificationLog.create({
-      data: {
-        circleId: member.circleId,
-        type: 'PENDING_APPROVAL',
-        title: 'Medication Update Awaiting Approval',
-        message: `${member.displayName} requested changes to "${existing.name}". Elder approval required.`,
-      },
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'PENDING_APPROVAL',
+      title: 'Medication Update Awaiting Approval',
+      message: `${member.displayName} requested changes to "${existing.name}". Elder approval required.`,
+      dedupeKey: `pending-approval-update:${changeRequest.id}`,
     });
 
     await recordActivity({
@@ -297,6 +345,8 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
       description: `${member.displayName} requested update to "${existing.name}"`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'MedicationChangeRequest',
+      targetId: changeRequest.id,
     });
 
     res.status(202).json({
@@ -311,7 +361,7 @@ export async function updateMedication(req: Request, res: Response, next: NextFu
 
 /**
  * Controller: Delete medication.
- * - Elder: direct deactivation.
+ * - Elder: direct deactivation (status: STOPPED, isActive: false).
  * - Caretaker: creates a pending DELETE change request for elder approval.
  */
 export async function deleteMedication(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -334,7 +384,7 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
     if (member.role === 'elder') {
       await prisma.medication.update({
         where: { id: existing.id },
-        data: { isActive: false },
+        data: { isActive: false, status: 'STOPPED' },
       });
 
       await recordActivity({
@@ -343,6 +393,8 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
         description: `${member.displayName} deactivated medication "${existing.name}"`,
         actorRole: member.role,
         actorName: member.displayName,
+        targetType: 'Medication',
+        targetId: existing.id,
       });
 
       res.json({
@@ -365,7 +417,7 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
         medicationId: existing.id,
         changeType: 'DELETE',
         status: 'PENDING',
-        proposedData: JSON.stringify({ isActive: false }),
+        proposedData: JSON.stringify({ isActive: false, status: 'STOPPED' }),
         currentData,
         requestedByRole: member.role,
         requestedByName: member.displayName,
@@ -373,13 +425,12 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
       },
     });
 
-    await prisma.notificationLog.create({
-      data: {
-        circleId: member.circleId,
-        type: 'PENDING_APPROVAL',
-        title: 'Medication Deletion Awaiting Approval',
-        message: `${member.displayName} requested to remove "${existing.name}". Elder approval required.`,
-      },
+    await sendNotificationWithDedupe({
+      circleId: member.circleId,
+      type: 'PENDING_APPROVAL',
+      title: 'Medication Deletion Awaiting Approval',
+      message: `${member.displayName} requested to remove "${existing.name}". Elder approval required.`,
+      dedupeKey: `pending-approval-delete:${changeRequest.id}`,
     });
 
     await recordActivity({
@@ -388,6 +439,8 @@ export async function deleteMedication(req: Request, res: Response, next: NextFu
       description: `${member.displayName} requested deactivation of "${existing.name}"`,
       actorRole: member.role,
       actorName: member.displayName,
+      targetType: 'MedicationChangeRequest',
+      targetId: changeRequest.id,
     });
 
     res.status(202).json({

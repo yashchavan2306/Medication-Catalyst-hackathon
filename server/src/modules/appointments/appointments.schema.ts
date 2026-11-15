@@ -6,6 +6,7 @@ export const createAppointmentSchema = z.object({
   location: z.string().min(1, 'Location is required').max(150),
   dateTime: z.string().datetime({ message: 'Must be a valid ISO-8601 date-time string' }),
   notes: z.string().max(500).optional(),
+  questions: z.any().optional(),
 });
 
 export const updateAppointmentSchema = z.object({
@@ -14,6 +15,7 @@ export const updateAppointmentSchema = z.object({
   location: z.string().min(1).max(150).optional(),
   dateTime: z.string().datetime().optional(),
   notes: z.string().max(500).optional(),
+  questions: z.any().optional(),
   status: z.enum(['UPCOMING', 'COMPLETED', 'CANCELLED']).optional(),
 });
 
